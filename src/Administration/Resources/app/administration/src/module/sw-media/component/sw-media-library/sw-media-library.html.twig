@@ -17,7 +17,7 @@
 
         {% block sw_media_index_create_folder %}
         <mt-button
-            v-if="editable"
+            v-if="editable || allowCreateFolder"
             v-tooltip="{
                 message: $tc('sw-privileges.tooltip.warning'),
                 disabled: acl.can('media.creator'),

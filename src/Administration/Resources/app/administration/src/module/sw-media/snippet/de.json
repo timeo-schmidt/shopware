@@ -103,6 +103,11 @@
       "labelTabItemLibrary": "Bibliothek",
       "labelTabItemUpload": "Dateien hochladen",
       "labelButtonSaveSelection": "Medien hinzufügen"
+    },
+    "sw-media-save-modal": {
+      "titleModal": "Save in media",
+      "buttonSave": "Save",
+      "buttonCancel": "Cancel"
     }
   },
   "sw-privileges": {
