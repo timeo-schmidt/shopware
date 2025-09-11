@@ -362,10 +362,12 @@ class TokenQueryBuilderTest extends TestCase
      */
     private static function term(string $field, string|int|float $query, int|float $boost): array
     {
+        $normalizedBoost = ($boost === 1 || $boost === 1.0) ? 1 : (float) $boost;
+
         return [
             'term' => [
                 $field => [
-                    'boost' => (float) $boost,
+                    'boost' => $normalizedBoost,
                     'value' => $query,
                 ],
             ],
@@ -405,21 +407,38 @@ class TokenQueryBuilderTest extends TestCase
             $languageField .= '.' . $languageId;
         }
 
-        $tokenCount = \count(\explode(' ', (string) $query));
+        $tokens = \explode(' ', (string) $query);
+        $tokenCount = \count($tokens);
 
-        $queries = [
-            self::match($languageField . '.search', $query, $boost, $tokenized ? 'auto' : 1, $andSearch),
-        ];
+        $queries = [];
 
-        if ($prefixMatch) {
-            $queries[] = self::matchPhrasePrefix($languageField . '.search', $query, $boost * 0.6);
+        // exact
+        if ($tokenCount === 1) {
+            $queries[] = self::term($languageField, $query, 1);
+        } else {
+            $queries[] = self::terms($languageField, $tokens, 1);
         }
 
-        if ($tokenized && $tokenCount === 1) {
-            $queries[] = self::match($languageField . '.ngram', $query, $boost * 0.4, null, $andSearch);
+        // fulltext
+        $queries[] = self::match($languageField . '.search', $query, 0.8, 'AUTO:3,8', $andSearch);
+
+        if ($prefixMatch && $tokenCount > 1) {
+            $queries[] = self::matchPhrasePrefix($languageField . '.search', $query, 0.6, 3, self::maxExpansionsForLastWord((string) $query));
         }
 
-        $dismax = self::disMax($queries);
+        if ($tokenCount === 1) {
+            if (mb_strlen((string) $query) >= 4) {
+                if ($tokenized) {
+                    // ngram term for long single token when tokenized
+                    $queries[] = self::term($languageField . '.ngram', $query, 0.4);
+                }
+            } else {
+                // prefix on main field for short single tokens (always)
+                $queries[] = self::prefix($languageField, $query, 0.4);
+            }
+        }
+
+        $dismax = self::disMax($queries, $boost);
 
         if ($explain) {
             $dismax['dis_max']['_name'] = json_encode([
@@ -442,7 +461,7 @@ class TokenQueryBuilderTest extends TestCase
             'boost' => (float) $boost,
         ];
 
-        if (preg_match('/\d{3,}/', (string) $query)) {
+        if (preg_match('/\d{3,}/', (string) $query) || is_numeric($query)) {
             $fuzziness = 0;
         }
 
@@ -453,6 +472,11 @@ class TokenQueryBuilderTest extends TestCase
         if (!\str_contains($field, '.ngram')) {
             $payload['operator'] = $andSearch ? 'and' : 'or';
         }
+
+        // extra tuning similar to production builder
+        $payload['fuzzy_transpositions'] = true;
+        $payload['max_expansions'] = self::maxExpansionsForLastWord((string) $query);
+        $payload['prefix_length'] = 1;
 
         return [
             'match' => [
@@ -466,12 +490,18 @@ class TokenQueryBuilderTest extends TestCase
      *
      * @return array{dis_max: array{queries: array<mixed>}}
      */
-    private static function disMax(array $queries): array
+    private static function disMax(array $queries, float|int|null $boost = null): array
     {
+        $payload = [
+            'queries' => $queries,
+        ];
+
+        if ($boost !== null) {
+            $payload['boost'] = (float) $boost;
+        }
+
         return [
-            'dis_max' => [
-                'queries' => $queries,
-            ],
+            'dis_max' => $payload,
         ];
     }
 
@@ -492,7 +522,7 @@ class TokenQueryBuilderTest extends TestCase
     /**
      * @return array{match_phrase_prefix: array<string, array{query: string|int|float, boost: float, slop: int}>}
      */
-    private static function matchPhrasePrefix(string $field, string|int|float $query, float $boost, int $slop = 3): array
+    private static function matchPhrasePrefix(string $field, string|int|float $query, float $boost, int $slop = 3, int $maxExpansion = 10): array
     {
         return [
             'match_phrase_prefix' => [
@@ -500,7 +530,54 @@ class TokenQueryBuilderTest extends TestCase
                     'query' => $query,
                     'boost' => $boost,
                     'slop' => $slop,
-                    'max_expansions' => 10,
+                    'max_expansions' => $maxExpansion,
+                ],
+            ],
+        ];
+    }
+
+    private static function maxExpansionsForLastWord(string $query): int
+    {
+        $parts = explode(' ', $query);
+        $last = ($parts[\count($parts) - 1] ?? $query);
+        $len = mb_strlen($last);
+
+        if ($len <= 3) {
+            return 5;
+        }
+
+        if ($len <= 6) {
+            return 10;
+        }
+
+        return 20;
+    }
+
+    /**
+     * @param array<string> $tokens
+     *
+     * @return array{terms: non-empty-array<string, array<string>|float|int>}
+     */
+    private static function terms(string $field, array $tokens, int|float $boost): array
+    {
+        return [
+            'terms' => [
+                $field => $tokens,
+                'boost' => $boost,
+            ],
+        ];
+    }
+
+    /**
+     * @return array{prefix: array<string, array{value: string|int|float, boost: float}>}
+     */
+    private static function prefix(string $field, string|int|float $query, float $boost): array
+    {
+        return [
+            'prefix' => [
+                $field => [
+                    'value' => $query,
+                    'boost' => $boost,
                 ],
             ],
         ];

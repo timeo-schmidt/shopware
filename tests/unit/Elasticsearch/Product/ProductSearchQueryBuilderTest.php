@@ -441,18 +441,34 @@ class ProductSearchQueryBuilderTest extends TestCase
             $field .= '.' . $languageId;
         }
 
-        $tokenCount = \count(\explode(' ', (string) $query));
+        $tokens = \explode(' ', (string) $query);
+        $tokenCount = \count($tokens);
 
-        $queries = [
-            self::match($field . '.search', $query, $boost, $tokenized ? 'auto' : 1, $andSearch),
-            self::matchPhrasePrefix($field . '.search', $query, $boost * 0.6),
-        ];
+        $queries = [];
 
-        if ($tokenized && $tokenCount === 1) {
-            $queries[] = self::match($field . '.ngram', $query, $boost * 0.4, null, $andSearch);
+        if ($tokenCount === 1) {
+            $queries[] = self::term($field, $query, 1);
+        } else {
+            $queries[] = self::terms($field, $tokens, 1);
         }
 
-        return self::disMax($queries);
+        $queries[] = self::match($field . '.search', $query, 0.8, self::computeFuzziness($query), $andSearch);
+
+        if ($tokenCount > 1) {
+            $queries[] = self::matchPhrasePrefix($field . '.search', $query, 0.6, 3, self::maxExpansionsForLastWord((string) $query));
+        }
+
+        if ($tokenCount === 1) {
+            if (mb_strlen((string) $query) >= 4) {
+                if ($tokenized) {
+                    $queries[] = self::term($field . '.ngram', $query, 0.4);
+                }
+            } else {
+                $queries[] = self::prefix($field, $query, 0.4);
+            }
+        }
+
+        return self::disMax($queries, $boost);
     }
 
     /**
@@ -465,7 +481,7 @@ class ProductSearchQueryBuilderTest extends TestCase
             'boost' => (float) $boost,
         ];
 
-        if (is_numeric($query) || preg_match('/\d{3,}/', $query)) {
+        if (is_numeric($query) || preg_match('/\\d{3,}/', $query)) {
             $fuzziness = 0;
         }
 
@@ -476,6 +492,10 @@ class ProductSearchQueryBuilderTest extends TestCase
         if (!\str_contains($field, '.ngram')) {
             $payload['operator'] = $andSearch ? 'and' : 'or';
         }
+
+        $payload['fuzzy_transpositions'] = true;
+        $payload['max_expansions'] = self::maxExpansionsForLastWord((string) $query);
+        $payload['prefix_length'] = 1;
 
         return [
             'match' => [
@@ -489,12 +509,18 @@ class ProductSearchQueryBuilderTest extends TestCase
      *
      * @return array{dis_max: array{queries: array<mixed>}}
      */
-    private static function disMax(array $queries): array
+    private static function disMax(array $queries, float|int|null $boost = null): array
     {
+        $payload = [
+            'queries' => $queries,
+        ];
+
+        if ($boost !== null) {
+            $payload['boost'] = (float) $boost;
+        }
+
         return [
-            'dis_max' => [
-                'queries' => $queries,
-            ],
+            'dis_max' => $payload,
         ];
     }
 
@@ -515,7 +541,7 @@ class ProductSearchQueryBuilderTest extends TestCase
     /**
      * @return array{match_phrase_prefix: array<string, array{query: string|int|float, boost: float, slop: int}>}
      */
-    private static function matchPhrasePrefix(string $field, string|int|float $query, float $boost, int $slop = 3): array
+    private static function matchPhrasePrefix(string $field, string|int|float $query, float $boost, int $slop = 3, int $maxExpansion = 10): array
     {
         return [
             'match_phrase_prefix' => [
@@ -523,8 +549,68 @@ class ProductSearchQueryBuilderTest extends TestCase
                     'query' => $query,
                     'boost' => $boost,
                     'slop' => $slop,
-                    'max_expansions' => 10,
+                    'max_expansions' => $maxExpansion,
                 ],
+            ],
+        ];
+    }
+
+    private static function computeFuzziness(string|int|float $query): int|string
+    {
+        if (is_numeric($query) || preg_match('/\\d{3,}/', $query)) {
+            return 0;
+        }
+
+        if (preg_match('/[A-Za-z].*\\d|\\d.*[A-Za-z]/', $query)) {
+            return 0;
+        }
+
+        return 'AUTO:3,8';
+    }
+
+    private static function maxExpansionsForLastWord(string $query): int
+    {
+        $parts = explode(' ', $query);
+        $last = ($parts[\count($parts) - 1] ?? $query);
+        $len = mb_strlen($last);
+
+        if ($len <= 3) {
+            return 5;
+        }
+
+        if ($len <= 6) {
+            return 10;
+        }
+
+        return 20;
+    }
+
+    /**
+     * @return array{prefix: array<string, array{value: string|int|float, boost: float}>}
+     */
+    private static function prefix(string $field, string|int|float $query, float $boost): array
+    {
+        return [
+            'prefix' => [
+                $field => [
+                    'value' => $query,
+                    'boost' => $boost,
+                ],
+            ],
+        ];
+    }
+
+    /**
+     * @param array<string> $tokens
+     *
+     * @return array{terms: non-empty-array<string, array<string>|float|int>}
+     */
+    private static function terms(string $field, array $tokens, int|float $boost): array
+    {
+        return [
+            'terms' => [
+                $field => $tokens,
+                'boost' => $boost,
             ],
         ];
     }
