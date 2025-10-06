@@ -44,7 +44,9 @@ class GoodsCountRule extends FilterRule
         $goods = $scope instanceof CartRuleScope
             ? new LineItemCollection($scope->getCart()->getLineItems()->filterGoodsFlat())
             : new LineItemCollection($scope->getLineItem()->isGood() ? [$scope->getLineItem()] : []);
+
         $filter = $this->filter;
+
         if ($filter !== null) {
             $context = $scope->getSalesChannelContext();
 

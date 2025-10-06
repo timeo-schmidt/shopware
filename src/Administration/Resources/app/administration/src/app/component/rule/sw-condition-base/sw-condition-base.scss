@@ -113,6 +113,11 @@ $sw-condition-color-border-default: $color-gray-500;
         gap: 4px;
         grid-template-columns: auto 1fr;
         width: 100%;
+
+        &:has(> :only-child) {
+            display: block;
+            grid-template-columns: 1fr;
+        }
     }
 
     .sw-condition__value-content {
