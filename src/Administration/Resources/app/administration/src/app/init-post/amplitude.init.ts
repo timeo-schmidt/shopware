@@ -2,13 +2,22 @@
  * @sw-package framework
  */
 import * as amplitude from '@amplitude/analytics-browser';
+import type { BaseEvent, EventOptions } from '@amplitude/analytics-types';
 import { string } from 'src/core/service/util.service';
 import { TelemetryEvent, type EventTypes, type TrackableType } from '../../core/telemetry/types';
+
+let userLoaded: Promise<void>;
 
 /**
  * @private
  */
 export default async function (): Promise<void> {
+    const loginService = Shopware.Service('loginService');
+
+    loginService.addOnLoginListener(() => {
+        userLoaded = setUserId();
+    });
+
     let defaultLanguageName = '';
 
     try {
@@ -66,7 +75,7 @@ export default async function (): Promise<void> {
         }
 
         if (isEventOfType('page_change', telemetryEvent)) {
-            amplitude.track('Page Viewed', {
+            track('Page Viewed', {
                 sw_route_from_name: telemetryEvent.detail.eventData.from.name,
                 sw_route_from_href: telemetryEvent.detail.eventData.from.path,
                 sw_route_to_name: telemetryEvent.detail.eventData.to.name,
@@ -106,9 +115,22 @@ export default async function (): Promise<void> {
                 eventProperties.sw_pointer_button = originalEvent.buttons;
             }
 
-            amplitude.track(eventName, eventProperties);
+            track(eventName, eventProperties);
         }
     });
+}
+
+function track(eventInput: string | BaseEvent, eventProperties?: Record<string, any>, eventOptions?: EventOptions): void {
+    /* Wait for the next cycle so that the first page load is included in the set of events of the
+     * logged-in user (happens just before the OnLogin event).
+     */
+    setTimeout(async () => {
+        try {
+            await userLoaded;
+        } catch (error) {}
+
+        amplitude.track(eventInput, eventProperties, eventOptions);
+    }, 0);
 }
 
 async function getDefaultLanguageName(): Promise<string> {
@@ -116,6 +138,15 @@ async function getDefaultLanguageName(): Promise<string> {
     const defaultLanguage = await languageRepository.get(Shopware.Context.api.systemLanguageId!);
 
     return defaultLanguage!.name;
+}
+
+async function setUserId(): Promise<void> {
+    const currentUser = await Shopware.Service('userService').getUser();
+    const shopId = Shopware.Store.get('context').app.config.shopId; // fetch after the user
+
+    if (shopId && currentUser) {
+        amplitude.setUserId(`${shopId}:${currentUser.data.id}`);
+    }
 }
 
 function isTelemetryEvent(telemetryEvent: Event): telemetryEvent is TelemetryEvent<EventTypes> {

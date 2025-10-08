@@ -5,6 +5,7 @@ jest.mock('@amplitude/analytics-browser', () => ({
     add: jest.fn(),
     init: jest.fn(),
     track: jest.fn(),
+    setUserId: jest.fn(),
 }));
 
 describe('src/app/post-init/amplitude.init.ts', () => {
@@ -142,6 +143,50 @@ describe('src/app/post-init/amplitude.init.ts', () => {
 
             expect(track).toHaveBeenCalled();
             expect(track).toHaveBeenCalledWith(trackedData.eventName, trackedData.properties);
+        });
+    });
+
+    describe('user identification', () => {
+        beforeEach(() => {
+            jest.clearAllMocks();
+        });
+
+        it('sets user ID when both shopId and currentUserId are available', async () => {
+            const mockShopId = 'knneBsx7LiKySnUq';
+            const mockUserId = '01996fea659872aba271fe17829c72b2';
+
+            Shopware.Store.get('context').app.config.shopId = mockShopId;
+            Shopware.Store.get('session').currentUser = { id: mockUserId };
+
+            const { setUserId } = await import('@amplitude/analytics-browser');
+
+            await initAmplitude();
+
+            expect(setUserId).toHaveBeenCalledWith(`${mockShopId}:${mockUserId}`);
+        });
+
+        it.each([
+            [
+                'shopId is missing',
+                { shopId: undefined, currentUser: { id: '01996fea659872aba271fe17829c72b2' } },
+            ],
+            [
+                'currentUser is null',
+                { shopId: 'knneBsx7LiKySnUq', currentUser: null },
+            ],
+            [
+                'currentUser.id is missing',
+                { shopId: 'knneBsx7LiKySnUq', currentUser: { username: 'admin' } },
+            ],
+        ])('does not set user ID when %s', async (_, { shopId, currentUser }) => {
+            Shopware.Store.get('context').app.config.shopId = shopId;
+            Shopware.Store.get('session').currentUser = currentUser;
+
+            const { setUserId } = await import('@amplitude/analytics-browser');
+
+            await initAmplitude();
+
+            expect(setUserId).not.toHaveBeenCalled();
         });
     });
 });
