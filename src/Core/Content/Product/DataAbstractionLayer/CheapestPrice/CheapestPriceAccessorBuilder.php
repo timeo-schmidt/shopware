@@ -58,7 +58,8 @@ class CheapestPriceAccessorBuilder implements FieldAccessorBuilderInterface
             array_pop($parts);
         }
 
-        if (end($parts) === 'percentage') {
+        $isPercentageAccessor = end($parts) === 'percentage';
+        if ($isPercentageAccessor) {
             $jsonAccessor = 'percentage.' . $jsonAccessor;
             array_pop($parts);
         }
@@ -94,11 +95,13 @@ class CheapestPriceAccessorBuilder implements FieldAccessorBuilderInterface
                 '#multiplier#' => (string) $multiplier,
             ];
 
-            $select[] = str_replace(
+            $expression = str_replace(
                 array_keys($parameters),
                 array_values($parameters),
                 $template
             );
+
+            $select[] = $expression;
 
             if ($context->getCurrencyId() === Defaults::CURRENCY) {
                 continue;
@@ -114,14 +117,21 @@ class CheapestPriceAccessorBuilder implements FieldAccessorBuilderInterface
                 '#multiplier#' => (string) $multiplier,
             ];
 
-            $select[] = str_replace(
+            $expression = str_replace(
                 array_keys($parameters),
                 array_values($parameters),
                 $template
             );
+
+            $select[] = $expression;
         }
 
-        return \sprintf('COALESCE(%s)', implode(',', $select));
+        $coalesceArguments = implode(',', $select);
+        if ($isPercentageAccessor) {
+            $coalesceArguments .= ', 0';
+        }
+
+        return \sprintf('COALESCE(%s)', $coalesceArguments);
     }
 
     private function useCashRounding(Context $context): bool
