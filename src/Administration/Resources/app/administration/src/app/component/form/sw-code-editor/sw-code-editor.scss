@@ -60,6 +60,23 @@ $sw-text-editor-color-label: $color-darkgray-200;
             background-color: $color-crimson-50;
         }
     }
+
+    &.is--disabled {
+        .sw-code-editor__editor {
+            background-color: $color-gray-100;
+
+            &::after {
+                content: "";
+                position: absolute;
+                z-index: 10;
+                top: 0;
+                right: 0;
+                bottom: 0;
+                left: 0;
+            }
+        }
+    }
+
 }
 
 .ace_editor * {
